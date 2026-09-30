@@ -1,0 +1,38 @@
+[
+  {
+    "question": "Where does authenticate_user validate a user's password?",
+    "expected_file": "shop/auth.py",
+    "expected_symbol": "authenticate_user",
+    "expected_answer_keywords": ["verify_password", "credentials", "email"]
+  },
+  {
+    "question": "Where is JWT token signature and expiration validation implemented?",
+    "expected_file": "shop/auth.py",
+    "expected_symbol": "validate_token",
+    "expected_answer_keywords": ["signature", "exp", "HS256"]
+  },
+  {
+    "question": "How does calculate_total multiply each item price by quantity?",
+    "expected_file": "shop/checkout.py",
+    "expected_symbol": "calculate_total",
+    "expected_answer_keywords": ["price", "quantity", "sum"]
+  },
+  {
+    "question": "How does login_handler return an access token after password authentication?",
+    "expected_file": "shop/routes.py",
+    "expected_symbol": "login_handler",
+    "expected_answer_keywords": ["authenticate_user", "issue_token", "access_token"]
+  },
+  {
+    "question": "How does the TypeScript submitCheckout client send a checkout request?",
+    "expected_file": "web/api.ts",
+    "expected_symbol": "submitCheckout",
+    "expected_answer_keywords": ["fetch", "POST", "Authorization"]
+  },
+  {
+    "question": "How does cartItemCount count items with an optional quantity?",
+    "expected_file": "web/cart.js",
+    "expected_symbol": "cartItemCount",
+    "expected_answer_keywords": ["reduce", "quantity", "1"]
+  }
+]

@@ -1,0 +1,40 @@
+# Credentials and local state
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+data/
+.data/
+backend/data/
+*.db
+*.db-shm
+*.db-wal
+*.log
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# JavaScript and browser verification
+node_modules/
+.next/
+out/
+dist/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

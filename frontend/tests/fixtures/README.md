@@ -1,0 +1,1 @@
+`tiny-repository.zip` is a real, small test repository containing one Python function. The ZIP upload browser test sends this file through the frontend proxy and backend ingestion; no API responses are mocked.
