@@ -1,6 +1,7 @@
 import json
 import logging
 import math
+import re
 import time
 from collections import Counter
 from uuid import uuid4
@@ -9,6 +10,7 @@ from sqlalchemy import select
 
 from app import cache
 from app.config import settings
+from app.dependencies import dependency_question
 from app.models import CodeChunk, Conversation, Message, Repository, index_generation
 from app.lexical import search_index
 from app.providers import IdentifierReranker, embedding_provider, generation_provider, tokenize
@@ -103,7 +105,66 @@ def retrieve(session, repository_id: str, question: str, strategy: str = "hybrid
     return selected, {"retrieval_ms": round(retrieval_ms, 2), "reranking_ms": round(reranking_ms, 2), "candidate_count": len(ranked), "context_chars": context_chars}
 
 
-def answer_question(session, repository_id: str, question: str, strategy="hybrid_rerank", conversation_id=None):
+def graph_evidence(session, repository_id: str, question: str, evidence: list[dict], analysis: dict) -> list[dict]:
+    """Supplement ranked context with original target/importer source, under the same budget."""
+    paths = [analysis["path"], *analysis["affected_files"][:7]]
+    chunks = list(session.scalars(select(CodeChunk).where(CodeChunk.repository_id == repository_id, CodeChunk.file_path.in_(paths))))
+    prioritized = []
+    terms = set(tokenize(question))
+    for path in paths:
+        matches = [chunk for chunk in chunks if chunk.file_path == path]
+        if not matches:
+            continue
+        if path == analysis["path"]:
+            chosen = min(matches, key=lambda row: (-len(terms & set(tokenize(row.symbol_name))), row.start_line))
+        else:
+            chosen = min(matches, key=lambda row: (not bool(re.search(r"\b(?:import|require)\b", row.content)), row.start_line))
+        row = citation(chosen)
+        row["graph_role"] = "change_target" if path == analysis["path"] else "potential_dependent"
+        prioritized.append(row)
+    selected, seen, context_chars = [], set(), 0
+    for row in [*prioritized, *evidence]:
+        size = len(row["content"]) + len(row["file_path"]) + len(row["symbol_name"])
+        if row["chunk_id"] in seen or len(selected) >= 8 or context_chars + size > settings.max_context_chars:
+            continue
+        selected.append(row)
+        seen.add(row["chunk_id"])
+        context_chars += size
+    return selected
+
+
+def impact_summary(analysis: dict, evidence: list[dict]) -> tuple[str, list[str]]:
+    if analysis["status"] != "resolved":
+        alternatives = " Candidate files: " + ", ".join(f"`{path}`" for path in analysis["candidate_paths"]) if analysis["candidate_paths"] else ""
+        return analysis["explanation"] + alternatives, []
+    target = analysis["path"]
+    available = {}
+    for row in evidence:
+        # Preserve the explicit target/import chunk ahead of incidental matches.
+        available.setdefault(row["file_path"], row["chunk_id"])
+    chains = {chain[0]: chain for chain in analysis["chains"]}
+    lines = [f"Potential impact of changing `{target}`, based on resolved file imports:"]
+    cited = [available[target]] if target in available else []
+    shown = 0
+    for path in analysis["affected_files"]:
+        if path not in available or path not in chains:
+            continue
+        chain = chains[path]
+        if chain[-1] == target:
+            lines.append("- " + " → imports ".join(f"`{item}`" for item in chain) + ".")
+        else:
+            lines.append(f"- `{path}` transitively imports `{target}`; its detailed chain exceeds the display limit.")
+        cited.append(available[path])
+        shown += 1
+    if not analysis["affected_files"]:
+        lines.append("No reverse imports were resolved for this file. This does not establish that no runtime callers exist.")
+    elif shown < len(analysis["affected_files"]):
+        lines.append(f"Showing source evidence for {shown} of {len(analysis['affected_files'])} potentially affected files. Inspect the Dependency Graph for the full file list.")
+    lines.append(analysis["explanation"] + " Dynamic imports, aliases and runtime dispatch may be unresolved.")
+    return "\n\n".join(lines), cited
+
+
+def answer_question(session, repository_id: str, question: str, strategy="hybrid_rerank", conversation_id=None, request_id=None):
     start = time.perf_counter()
     repo = session.get(Repository, repository_id)
     if not repo or repo.status != "ready":
@@ -116,18 +177,31 @@ def answer_question(session, repository_id: str, question: str, strategy="hybrid
         conversation = Conversation(repository_id=repository_id, title=question[:160])
         session.add(conversation)
         session.flush()
-    cache_key = cache.key(repository_id, str(repo.indexed_at), repo.embedding_provider, generation_provider().__class__.__name__, settings.llm_model, question, strategy)
+    cache_key = cache.key("graph-ask-v1", repository_id, str(repo.indexed_at), repo.embedding_provider, generation_provider().__class__.__name__, settings.llm_model, question, strategy)
     cached = cache.get(cache_key)
     if cached:
         response = cached
         response["metrics"]["cached_original_total_ms"] = response["metrics"]["total_ms"]
         response["metrics"]["cache_hit"] = True
-        response["metrics"].update({"retrieval_ms": 0, "reranking_ms": 0, "llm_ms": 0, "input_tokens": 0, "output_tokens": 0, "estimated_cost": 0})
+        response["metrics"].update({"retrieval_ms": 0, "reranking_ms": 0, "graph_ms": 0, "llm_ms": 0, "input_tokens": 0, "output_tokens": 0, "estimated_cost": 0})
         response["metrics"]["total_ms"] = round((time.perf_counter() - start) * 1000, 2)
     else:
         evidence, metrics = retrieve(session, repository_id, question, strategy)
+        graph_start = time.perf_counter()
+        analysis = dependency_question(session, repository_id, question)
+        if analysis and analysis["status"] == "resolved":
+            evidence = graph_evidence(session, repository_id, question, evidence, analysis)
+        metrics["graph_ms"] = round((time.perf_counter() - graph_start) * 1000, 2)
+        metrics["context_chars"] = sum(len(row["content"]) + len(row["file_path"]) + len(row["symbol_name"]) for row in evidence)
         llm_start = time.perf_counter()
-        generated = generation_provider().generate(question, evidence)
+        if analysis and analysis["status"] != "resolved":
+            generated = {"answer": "", "citation_ids": [], "model": "import-graph", "input_tokens": None, "output_tokens": None}
+        else:
+            generated = generation_provider().generate(question, evidence)
+        if analysis:
+            summary, graph_citations = impact_summary(analysis, evidence)
+            generated["answer"] = summary + ("\n\n" + generated["answer"] if generated["answer"] else "")
+            generated["citation_ids"] = list(dict.fromkeys([*graph_citations, *generated["citation_ids"]]))
         metrics.update({"llm_ms": round((time.perf_counter() - llm_start) * 1000, 2),
             "total_ms": round((time.perf_counter() - start) * 1000, 2), "retrieved_chunks": len(evidence),
             "model": generated["model"], "input_tokens": generated.get("input_tokens"),
@@ -135,11 +209,13 @@ def answer_question(session, repository_id: str, question: str, strategy="hybrid
         if metrics["input_tokens"] is not None and metrics["output_tokens"] is not None and settings.llm_input_cost_per_million is not None and settings.llm_output_cost_per_million is not None:
             metrics["estimated_cost"] = (metrics["input_tokens"] * settings.llm_input_cost_per_million + metrics["output_tokens"] * settings.llm_output_cost_per_million) / 1_000_000
         response = {"answer": generated["answer"], "citations": [row for row in evidence if row["chunk_id"] in generated["citation_ids"]],
-                    "retrieval": evidence, "metrics": metrics, "mode": "extractive" if generated["model"] == "extractive-offline" else "llm"}
+                    "retrieval": evidence, "metrics": metrics, "mode": "extractive" if generated["model"] in {"extractive-offline", "import-graph"} else "llm"}
+        if analysis:
+            response["impact"] = analysis
         cache.put(cache_key, response)
     response["conversation_id"] = conversation.id
     session.add(Message(conversation_id=conversation.id, role="user", content=question))
     session.add(Message(conversation_id=conversation.id, role="assistant", content=response["answer"], citations=response["citations"], metrics=response["metrics"]))
     session.commit()
-    logger.info(json.dumps({"event": "query", "request_id": str(uuid4()), "repository_id": repository_id, "strategy": strategy, **response["metrics"]}))
+    logger.info(json.dumps({"event": "query", "request_id": request_id or str(uuid4()), "repository_id": repository_id, "strategy": strategy, **response["metrics"]}))
     return response

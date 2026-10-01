@@ -107,8 +107,7 @@ class DockerSandbox:
         name = "repopilot-" + uuid.uuid4().hex
         timeout = max(1, min(int(settings.sandbox_timeout), 300))
         maximum_output = max(1000, min(getattr(settings, "sandbox_max_output", 20000), 100000))
-        container_image = (getattr(settings, "sandbox_node_image", "node:22-alpine")
-                           if argv[0] == "npm" else getattr(settings, "sandbox_image", "repopilot-sandbox:local"))
+        container_image = settings.sandbox_node_image if argv[0] == "npm" else settings.sandbox_image
         process = None
         try:
             with tempfile.TemporaryDirectory(prefix="repopilot-sandbox-") as temporary:

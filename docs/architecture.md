@@ -12,6 +12,12 @@ forwards them to FastAPI and can inject a configured shared API token. FastAPI
 validates Pydantic request models and stores state using SQLAlchemy sessions.
 Long operations create persisted job/run records before dispatching work.
 
+The API assigns a UUID request ID, accepting a client ID only when it has the
+canonical UUID form. HTTP responses and structured HTTP/query logs share that
+ID, including admission rejections. The Next proxy forwards validated UUID
+headers in both directions, so browser requests can be correlated with backend
+query timings without logging questions, authorization headers or credentials.
+
 ```mermaid
 sequenceDiagram
     participant User
@@ -118,6 +124,14 @@ Nodes are files and edges are resolved imports. Outgoing edges answer “what do
 this file import?” Incoming edges and reverse traversal answer “which files may
 depend on this file?” `shop/routes.py` imports `shop/auth.py` and
 `shop/checkout.py` in the demo, so authentication changes may affect routes.
+
+Ask Repo recognizes impact/dependency questions and resolves an explicit full
+path, unique basename or unique symbol to an indexed file. It traces reverse
+imports, adds bounded target/dependent source chunks to answer context and
+prepends an import-chain summary with source citations. An unresolved or
+ambiguous target returns a request for a unique name. The response includes
+`impact` metadata and measures this stage as `graph_ms`; graph evidence uses the
+same context budget as ordinary retrieval.
 
 This analysis is deliberately conservative. It does not claim complete call
 graphs, type resolution, runtime reflection, framework routing or package alias

@@ -24,12 +24,12 @@ uses its checked-in pnpm lockfile.
 
 | Check | Observed result | Scope |
 | --- | --- | --- |
-| Backend pytest | 110 passed, 1 skipped in 13.02 s | API, ingestion, parsing, persisted lexical indexing, ranking, budgets, security, tools, patches and evaluations |
+| Backend pytest | 136 passed, 1 skipped in 10.39 s | API, ingestion, parsing, persisted lexical indexing, ranking, graph-aware answers, request correlation, budgets, security, tools, patches and evaluations |
 | Ruff | Passed | Backend application and tests |
 | Alembic | All three migrations applied; `check` reported no pending operations | SQLite schema and migration behavior |
-| Frontend type check | Passed | TypeScript and server proxy |
+| Frontend type check | Passed | TypeScript and server proxy; isolated source copy also passed without generated `.next` files |
 | Frontend production build | Passed, 12 routes generated | Next.js route compilation |
-| Chromium integration | 3 tests passed | Repository workflow, mobile navigation and real ZIP upload through the proxy |
+| Chromium integration | 4 cases passed across separate 3-case and 1-case runs | Repository workflow, mobile navigation, real ZIP upload, impact source evidence and proxy request IDs |
 | Compose configuration | `docker compose config --quiet` passed | Configuration only; containers were not started |
 | PowerShell scripts | Syntax parser checks passed | Local setup/start scripts |
 | Docs and dataset | Links resolved; six expected symbols parsed | Documentation and Python/JS/TS evaluation identity |
@@ -40,17 +40,45 @@ hidden as a clean all-platform result. Linux CI is configured for tests,
 migrations, lint and a real browser flow; local checks do not prove a remote
 CI run completed.
 
+The isolated TypeScript check copied `src`, `tsconfig.json` and `next-env.d.ts`
+into a temporary directory, reused the installed dependencies, and ran `tsc`
+without a `.next` directory. It confirms the checked-in configuration can run
+the CI type check before building; it does not represent a fresh dependency
+installation.
+
+The latest frontend type check and production build were repeated after the
+request-ID proxy change and passed, with the same 12 routes. Eight focused API
+cases verify shared HTTP/query IDs, replacement of malformed client IDs without
+logging their contents, and correlation headers on admission failures. These
+cases are included in the consolidated backend result above.
+
+A final graph-citation regression verifies that the deterministic impact summary
+cites the named target and actual import chunks even when generation supplies no
+citations. It preserves these source ranges ahead of incidental same-file matches.
+
 The browser workflow imported the demo, waited for indexing, asked a question,
 opened source citations/retrieval inspection, browsed files, selected graph
 nodes, ran an evaluation and rejected an agent patch. The ZIP case sent a real
 archive through the Next.js proxy. The final three-test browser run also verified
-responsive theme persistence and completed in **36.1 seconds** in this environment.
+responsive theme persistence and completed in **32.5 seconds** in this environment.
+A separate new impact test passed in **7.3 seconds** including runner overhead
+(5.7 seconds for the case). It checked graph-informed Q&A, import lines in the
+source viewer, unknown-symbol clarification without citations and UUID
+preservation through the proxy. TypeScript passed again after this test was
+added. These are two runs, rather than a measured four-case suite duration.
 
 ## Live ingestion and source evidence
 
 Tiny Shop indexed **11 files and 31 chunks** after excluding `evaluation.json`
 from the retrieval corpus. The metadata remains browseable but cannot become
 evidence for its own questions.
+
+A live question through `127.0.0.1:3000` resolved `validate_token` to
+`shop/auth.py`, identified `shop/routes.py` and `tests/test_auth.py` as possible
+dependents and returned source citations for all three files. The response's
+`X-Request-ID` matched both the query and HTTP log events. The browser result is
+captured in [impact.png](screenshots/impact.png); the relationships indicate
+potential import impact rather than proven function calls.
 
 A real GitHub import of [pallets/itsdangerous](https://github.com/pallets/itsdangerous)
 indexed **29 files and 185 chunks**. Queries retrieved the `Signer` class and its

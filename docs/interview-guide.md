@@ -146,7 +146,10 @@ application constrains citations to retrieved evidence. A real line range makes
 verification possible; it does not prove every generated statement is entailed.
 
 **How does impact analysis work?** Traverse incoming import edges to identify
-files that may depend on a selected file. It returns candidates and limitations.
+files that may depend on a selected file. Ask Repo resolves an explicitly named
+file or unique symbol, adds source evidence and describes potential import
+chains. Ambiguous names ask for a unique target. It returns candidates and
+limitations.
 Dynamic calls, aliases and framework dispatch need richer resolution, so I do
 not claim a complete function call graph.
 

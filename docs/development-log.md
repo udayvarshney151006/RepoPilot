@@ -55,3 +55,11 @@ Subsequent phase results will be recorded after execution, including failures an
 - Fourteen focused tests verify score equivalence, exact chunk/generation validation, disk/cache bounds, corruption recovery and query-only tokenization.
 - Final consolidated backend result: 110 passed, one Windows symlink privilege skip; Ruff passed. The recorded six-case evaluation above predates persistence and uses the same BM25 scoring formula.
 - Live API verification reindexed the original demo to 11 files and 31 chunks, wrote a 13,554-byte lexical artifact, and retrieved the actual `validate_token` source at lines 53–67. Both application health checks returned HTTP 200 after the final restart.
+- Final handoff inspected committed files, setup consistency and credential/runtime exclusions. An isolated source copy passed TypeScript without generated `.next` files, confirming the configured CI type-check order. No frontend code change was needed.
+
+## Continued requirements audit
+
+- Preserved the completed implementation and audited the original specification against the recorded local commit. Found and completed three integration gaps: configurable prebuilt JavaScript sandbox images, shared request IDs through the proxy/API/query logs, and graph traversal plus source retrieval for natural-language impact questions.
+- Impact questions resolve explicit file paths, unique basenames or exact symbols. Ambiguous and missing targets request clarification without calling a generation provider; source evidence remains within the existing chunk/context budgets. Reverse-import chains describe potential impact and retain static-analysis limitations.
+- Consolidated regression checks passed: 136 backend tests in 10.39 seconds, one Windows symlink privilege skip, Ruff and Alembic schema comparison. The final citation regression retains the named target and import chunks ahead of incidental same-file matches, even without generated citations.
+- Frontend TypeScript and the production build passed after the proxy change. Three actual-API Chromium flows passed in 32.5 seconds; a separate new impact/citation/request-ID browser case passed in 7.3 seconds. A live proxy query independently matched its response ID to both HTTP and query logs. Updated screenshots include the real impact answer.

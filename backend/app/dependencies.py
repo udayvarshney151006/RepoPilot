@@ -1,5 +1,6 @@
 from collections import deque
 from pathlib import PurePosixPath
+import re
 
 from sqlalchemy import select
 
@@ -57,11 +58,53 @@ def impact(session, repository_id: str, path: str) -> dict:
         incoming.setdefault(edge["target"], []).append(edge["source"])
     queue = deque([path])
     visited = {path}
+    toward_target = {}
     while queue:
-        for dependent in incoming.get(queue.popleft(), []):
+        current = queue.popleft()
+        for dependent in incoming.get(current, []):
             if dependent not in visited:
                 visited.add(dependent)
+                toward_target[dependent] = current
                 queue.append(dependent)
-    return {"path": path, "affected_files": sorted(visited - {path}),
+    affected = sorted(visited - {path})
+    # Detailed chains are bounded; traversal still counts every reachable file.
+    chains = []
+    truncated = len(affected) > 8
+    for dependent in affected[:8]:
+        chain = [dependent]
+        while chain[-1] != path and len(chain) < 16:
+            chain.append(toward_target[chain[-1]])
+        truncated = truncated or chain[-1] != path
+        chains.append(chain)
+    return {"path": path, "affected_files": affected, "chains": chains, "chains_truncated": truncated,
             "dependencies": [edge["target"] for edge in data["edges"] if edge["source"] == path],
             "explanation": "These files transitively import this file and may need review after a change. An import relationship is evidence of potential impact, not proof that a specific function is used."}
+
+
+def dependency_question(session, repository_id: str, question: str) -> dict | None:
+    """Resolve an explicit impact target; ambiguous identifiers must not be guessed."""
+    intent = re.search(
+        r"\b(?:impact(?:ed|s)?|affect(?:ed|s)?|depend(?:s|ents|encies|ency|ent)?|callers)\b"
+        r"|\b(?:who|which|what)\b.*\b(?:imports?|uses?)\b"
+        r"|\bif\b.*\b(?:change|changes|modify|modified|edit)\b", question, re.IGNORECASE,
+    )
+    if not intent:
+        return None
+    files = list(session.scalars(select(RepositoryFile).where(RepositoryFile.repository_id == repository_id)))
+
+    def mentioned(value: str, path=False) -> bool:
+        boundary = r"[\w/.]" if path else r"[\w.]"
+        return bool(re.search(r"(?<!" + boundary + r")" + re.escape(value) + r"(?!" + boundary + r")", question, re.IGNORECASE))
+
+    candidates = {file.path for file in files if mentioned(file.path, path=True)}
+    if not candidates:
+        candidates = {file.path for file in files if mentioned(PurePosixPath(file.path).name, path=True)}
+    if not candidates:
+        candidates = {file.path for file in files for symbol in file.symbols
+                      if mentioned(symbol["name"]) or mentioned(symbol["name"].rsplit(".", 1)[-1])}
+    if len(candidates) != 1:
+        return {"status": "ambiguous" if candidates else "unresolved", "candidate_paths": sorted(candidates)[:8],
+                "explanation": "Name an indexed file path or a uniquely identifiable symbol so import impact can be traced without guessing."}
+    result = impact(session, repository_id, candidates.pop())
+    result["status"] = "resolved"
+    return result

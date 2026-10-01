@@ -1,9 +1,11 @@
 """Exercise real API handlers and workers with a fresh, isolated SQLite database."""
 import io
+import json
 import time
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -113,6 +115,62 @@ def test_demo_health_files_query_citations_conversations_and_import_impact(api):
     affected = api.client.get(f"/api/repositories/{identity}/impact", params={"path": "shop/checkout.py"}).json()
     assert "shop/routes.py" in affected["affected_files"]
     assert "potential impact" in affected["explanation"]
+
+
+def test_query_request_id_correlates_http_and_query_logs(api, caplog):
+    identity = demo(api)
+    caplog.set_level("INFO")
+    request_id = "DB6F6F57-B8D4-4584-80E5-F29C5E1B1B55"
+    response = api.client.post(f"/api/repositories/{identity}/query", headers={"X-Request-ID": request_id},
+                               json={"question": "Where is validate_token defined?"})
+    assert response.status_code == 200, response.text
+    assert response.headers["X-Request-ID"] == request_id.lower()
+    logs = [json.loads(record.message) for record in caplog.records
+            if record.name in {"repopilot.http", "repopilot.requests"}]
+    assert {row["event"] for row in logs} >= {"http", "query"}
+    assert all(row["request_id"] == request_id.lower() for row in logs)
+
+
+@pytest.mark.parametrize("client_id", ["not-a-uuid-sensitive-value", "x" * 1000,
+                                     "00000000-0000-0000-0000-00000000000z"])
+def test_invalid_request_ids_are_replaced_without_echoing_or_logging_input(api, caplog, client_id):
+    caplog.set_level("INFO", logger="repopilot.http")
+    response = api.client.get("/api/health", headers={"X-Request-ID": client_id})
+    assert response.status_code == 200
+    request_id = response.headers["X-Request-ID"]
+    assert str(UUID(request_id)) == request_id
+    assert request_id != client_id
+    assert client_id not in caplog.text
+    logs = [json.loads(record.message) for record in caplog.records if record.name == "repopilot.http"]
+    assert logs[-1]["request_id"] == request_id
+
+
+@pytest.mark.parametrize("rejection", ["authentication", "rate_limit", "invalid_length", "oversized_upload"])
+def test_boundary_rejections_keep_request_id_and_structured_http_log(api, monkeypatch, caplog, rejection):
+    caplog.set_level("INFO", logger="repopilot.http")
+    request_id = "a42c507c-6a85-4b4a-baf1-c5d432d90111"
+    headers = {"X-Request-ID": request_id}
+    path = "/api/repositories/demo"
+    method = "POST"
+    if rejection == "authentication":
+        monkeypatch.setattr(settings, "api_auth_token", "private-test-token")
+        path, method, expected = "/api/settings", "GET", 401
+    elif rejection == "rate_limit":
+        main.rate_windows["testclient"].extend([time.monotonic()] * 60)
+        expected = 429
+    elif rejection == "invalid_length":
+        path, expected = "/api/repositories/upload", 411
+        headers["Content-Length"] = "invalid"
+    else:
+        path, expected = "/api/repositories/upload", 413
+        headers["Content-Length"] = str(settings.max_upload_bytes + 65537)
+    response = api.client.request(method, path, headers=headers)
+    assert response.status_code == expected
+    assert response.headers["X-Request-ID"] == request_id
+    logs = [json.loads(record.message) for record in caplog.records if record.name == "repopilot.http"]
+    assert logs[-1]["request_id"] == request_id
+    assert logs[-1]["status"] == expected
+    assert "private-test-token" not in caplog.text
 
 
 def test_agent_rejection_preserves_managed_source_and_demonstrates_unavailable_tests(api):

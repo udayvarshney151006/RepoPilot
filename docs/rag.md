@@ -119,6 +119,21 @@ ranking still can return irrelevant positive-overlap chunks, and prompt rules
 cannot guarantee factuality. Better calibration needs held-out unanswerable
 questions, entailment checks and reviewer labels.
 
+## Graph evidence for impact questions
+
+For an impact/dependency question, the system resolves an explicitly mentioned
+indexed path, unique basename or unique symbol. It follows incoming file-import
+edges and supplements ranked evidence with source from the target and potential
+dependents, still capped at eight chunks and the shared context budget. The
+answer includes a deterministic import-chain summary alongside the generated or
+extractive source explanation. Its citations reference actual indexed chunks.
+
+Unresolved or ambiguous targets ask for a unique file/symbol and skip generation
+instead of selecting a convenient top-ranked file. The optional `impact`
+response describes resolved candidates/chains, while `graph_ms` records the
+traversal/context stage. This shows possible impact at file level; it does not
+establish a function call graph, complete runtime behavior or test coverage.
+
 ## Caching and observations
 
 Optional Redis cache entries include repository index generation, provider,
@@ -126,11 +141,17 @@ question and retrieval strategy, with a short TTL. Reindexing changes the
 generation, preventing reuse of pre-edit answers. Redis absence should degrade
 to a real query, not a fabricated cached success.
 
-Responses record retrieval, reranking, generation and total milliseconds, context
-count, model and provider-reported tokens when available. Cost is unavailable
+Responses record retrieval, reranking, graph, generation and total milliseconds,
+context count, model and provider-reported tokens when available. Cost is unavailable
 unless pricing is configured. Measure the entire request for user latency and
 separate stages when identifying bottlenecks. Local timings are machine- and
 dataset-specific.
+
+The HTTP middleware and query logger share a UUID request ID, returned in
+`X-Request-ID` and safely forwarded by the Next server proxy. This links request
+duration to retrieval/generation timings. Invalid client identifiers are
+replaced; logs contain structured metadata rather than raw question text or
+authorization headers.
 
 ## Interview tradeoffs
 

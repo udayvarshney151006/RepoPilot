@@ -23,7 +23,8 @@ offline providers:
 ![Repository answers and retrieval inspector](docs/screenshots/workspace.png)
 
 [Evaluation dashboard with an executed run](docs/screenshots/evaluations.png) ·
-[Agent trace, unavailable sandbox results and staged diff](docs/screenshots/agent.png)
+[Agent trace, unavailable sandbox results and staged diff](docs/screenshots/agent.png) ·
+[Impact answer with cited import evidence](docs/screenshots/impact.png)
 
 1. Open `http://localhost:3000` and connect the bundled **Tiny Shop** demo.
 2. Watch ingestion progress through queued, cloning, parsing, embedding and
@@ -31,7 +32,8 @@ offline providers:
 3. Ask **“Where is JWT token signature and expiration validation implemented?”**
    Open the `shop/auth.py` citation to inspect the source and line range.
 4. Browse files and inspect the dependency graph. `shop/routes.py` imports both
-   authentication and checkout code.
+   authentication and checkout code. Ask “If I change `validate_token`, which
+   files may be affected?” to inspect the cited import chains in Ask Repo.
 5. Open Evaluations and run the bundled cases. The dashboard compares vector,
    BM25, hybrid and hybrid with reranking using the results of that run.
 6. Ask the agent: **“POST /checkout returns 500 when an item omits quantity.
@@ -128,9 +130,13 @@ index. Rejection leaves source untouched. See [agent design](docs/agent.md).
 ## Dependency analysis
 
 The graph shows conservatively resolved file imports. Selecting a file reveals
-its incoming and outgoing edges; impact follows reverse imports. This is useful
-navigation evidence, not proof that every caller or runtime dependency has been
-found. Dynamic imports, aliases and framework dispatch limit coverage. See
+its incoming and outgoing edges; impact follows reverse imports. Ask Repo also
+uses this traversal for questions such as “If I change `calculate_total`, which
+files may be affected?” It resolves an explicitly named file or unique symbol,
+adds target/importer source citations and explains the potential import chains.
+Ambiguous targets ask for a unique path instead of guessing. Dynamic imports,
+aliases and framework dispatch limit coverage; file imports do not prove that
+a particular function is called. See
 [architecture](docs/architecture.md#dependency-analysis).
 
 ## Sandbox security
@@ -259,8 +265,12 @@ docker build -f backend/Dockerfile.sandbox -t repopilot-sandbox:local .
 Set `SANDBOX_ENABLED=true` in `.env` and restart the backend. The image has pytest
 preinstalled; sandbox network access remains disabled. Retry the demo agent to
 see baseline failure and candidate test output. The npm allowlist does not
-install dependencies at runtime; JavaScript projects need an appropriate
-prebuilt image with their test dependencies. Image launch failures are reported.
+install dependencies at runtime. Set `SANDBOX_NODE_IMAGE` to a locally available
+image with the JavaScript project's test dependencies preinstalled; its default,
+`node:22-alpine`, supplies Node/npm only. Images are never pulled during test
+execution. Custom images must expose tools/modules from outside `/workspace`,
+whose temporary mount hides image files at that path. Image launch failures are
+reported.
 
 To use PostgreSQL/RQ while the backend runs on the host:
 

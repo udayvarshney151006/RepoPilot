@@ -5,12 +5,13 @@ from types import SimpleNamespace
 import json
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app import agents, evaluations
-from app.config import settings
+from app.config import Settings, settings
 from app.db import Base
 from app.models import AgentRun, AgentStep, CodeChunk, EvaluationRun, Repository, RepositoryFile
 from app.providers import LocalEmbedding
@@ -110,6 +111,46 @@ def test_sandbox_constrains_container_and_passes_command_as_argv(monkeypatch, tm
     assert command[command.index("--user") + 1] == "65534:65534"
     assert command[-4:] == ["python", "-m", "pytest", "-q"]
     assert result["status"] == "passed"
+
+
+def test_configured_prebuilt_node_image_runs_only_allowlisted_npm_tests_without_network(monkeypatch, tmp_path):
+    import app.sandbox as sandbox_module
+    configured_image = "registry.example:5000/acme/repository-tests:local"
+    monkeypatch.setenv("SANDBOX_NODE_IMAGE", configured_image)
+    configured = Settings(_env_file=None, data_dir=tmp_path)
+    assert configured.sandbox_node_image == configured_image
+    monkeypatch.setattr(sandbox_module, "settings", configured)
+    calls = []
+    class Process:
+        returncode = 0
+        def __init__(self, argv, stdout, stderr, shell):
+            calls.append(argv)
+            assert shell is False
+            stdout.write(b"test runner completed\n")
+        def poll(self):
+            return 0
+        def wait(self, timeout):
+            return 0
+    monkeypatch.setattr(DockerSandbox, "available", lambda self: True)
+    monkeypatch.setattr(sandbox_module.subprocess, "Popen", Process)
+    monkeypatch.setattr(sandbox_module.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0))
+    result = DockerSandbox().run(tmp_path, "npm test -- --runInBand")
+    command = calls[0]
+    assert command[command.index(configured_image) + 1] == "sh"
+    assert command[command.index("--network") + 1] == "none"
+    assert "--pull=never" in command
+    assert command[-4:] == ["npm", "test", "--", "--runInBand"]
+    assert "install" not in command
+    assert result["status"] == "passed"
+    rejected = DockerSandbox().run(tmp_path, "npm install")
+    assert rejected["status"] == "rejected" and rejected["executed"] is False
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("image", ["", "--privileged", "node:22 --network host", "node:22;env", "node\n:22"])
+def test_sandbox_image_configuration_rejects_flags_whitespace_and_shell_syntax(tmp_path, image):
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, data_dir=tmp_path, sandbox_node_image=image)
 
 
 def test_snapshot_excludes_credentials_and_symlinks(tmp_path):

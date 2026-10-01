@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const maximumUploadBytes = 25 * 1024 * 1024 + 64 * 1024;
+const requestIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function proxy(
   request: NextRequest,
@@ -22,6 +23,9 @@ async function proxy(
   ).replace(/\/$/, "");
   const url = `${origin}/api/${path.map(encodeURIComponent).join("/")}${request.nextUrl.search}`;
   const headers = new Headers();
+  const clientRequestId = request.headers.get("x-request-id");
+  if (clientRequestId?.length === 36 && requestIdPattern.test(clientRequestId))
+    headers.set("x-request-id", clientRequestId.toLowerCase());
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("content-type", contentType);
   const isUpload = path.join("/") === "repositories/upload";
@@ -90,13 +94,17 @@ async function proxy(
       }
     }
     const upstream = await fetch(url, options);
+    const responseHeaders = new Headers({
+      "content-type":
+        upstream.headers.get("content-type") || "application/json",
+      "cache-control": "no-store",
+    });
+    const requestId = upstream.headers.get("x-request-id");
+    if (requestId?.length === 36 && requestIdPattern.test(requestId))
+      responseHeaders.set("x-request-id", requestId.toLowerCase());
     return new Response(upstream.body, {
       status: upstream.status,
-      headers: {
-        "content-type":
-          upstream.headers.get("content-type") || "application/json",
-        "cache-control": "no-store",
-      },
+      headers: responseHeaders,
     });
   } catch {
     return Response.json(

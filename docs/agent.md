@@ -89,6 +89,14 @@ read-only and copies source into a writable temporary workspace inside a
 resource-limited container. The root filesystem remains read-only, network is
 disabled and secrets from the API environment are not forwarded.
 
+Python commands use `SANDBOX_IMAGE`; npm commands use `SANDBOX_NODE_IMAGE`.
+The supplied Python image includes pytest. The default Node image provides
+Node/npm; projects needing Jest or other packages need a locally built image
+with those dependencies available. The runner neither installs packages nor
+pulls images during execution. Image tools/dependencies must live outside the
+temporary `/workspace` mount and be exposed through image configuration, such
+as its executable search path.
+
 Output includes `status`, `executed`, `success`, `exit_code`, command and duration.
 `unavailable` means tests did not execute. Timeout or truncated output also remains
 visible. Cleanup removes temporary source and the named container. Docker

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock, RLock
 from functools import wraps
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
@@ -42,7 +42,7 @@ async def lifespan(_app):
 
 
 app = FastAPI(title="RepoPilot API", version="0.1.0", description="Grounded code intelligence with bounded tools and human-approved patches.", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins.split(","), allow_methods=["GET", "POST"], allow_headers=["Content-Type", "Authorization"])
+app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins.split(","), allow_methods=["GET", "POST"], allow_headers=["Content-Type", "Authorization", "X-Request-ID"], expose_headers=["X-Request-ID"])
 rate_windows: dict[str, deque] = defaultdict(deque)
 rate_lock = Lock()
 job_locks = [RLock() for _ in range(64)]
@@ -65,12 +65,27 @@ def serialized_job(function):
 @app.middleware("http")
 async def request_boundary(request: Request, call_next):
     request_id = str(uuid4())
+    supplied_id = request.headers.get("x-request-id", "")
+    if len(supplied_id) == 36:
+        try:
+            normalized_id = str(UUID(supplied_id))
+            if normalized_id == supplied_id.lower():
+                request_id = normalized_id
+        except ValueError:
+            pass
+    request.state.request_id = request_id
     started = time.perf_counter()
+
+    def finish(response):
+        response.headers["X-Request-ID"] = request_id
+        logger.info(json.dumps({"event": "http", "request_id": request_id, "method": request.method, "route": request.scope.get("route").path if request.scope.get("route") else "unmatched", "status": response.status_code, "duration_ms": round((time.perf_counter() - started) * 1000, 2)}))
+        return response
+
     if request.url.path.startswith("/api/") and request.url.path != "/api/health":
         if settings.api_auth_token:
             expected = "Bearer " + settings.api_auth_token
             if not hmac.compare_digest(request.headers.get("authorization", ""), expected):
-                return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+                return finish(JSONResponse(status_code=401, content={"detail": "Authentication required"}))
         if request.method == "POST":
             now = time.monotonic()
             peer = request.client.host if request.client else "unknown"
@@ -79,21 +94,19 @@ async def request_boundary(request: Request, call_next):
                 while window and window[0] < now - 60:
                     window.popleft()
                 if len(window) >= 60:
-                    return JSONResponse(status_code=429, content={"detail": "Too many requests. Retry in a minute."}, headers={"Retry-After": "60"})
+                    return finish(JSONResponse(status_code=429, content={"detail": "Too many requests. Retry in a minute."}, headers={"Retry-After": "60"}))
                 window.append(now)
         if request.url.path == "/api/repositories/upload":
             try:
                 declared_length = int(request.headers.get("content-length", ""))
             except ValueError:
-                return JSONResponse(status_code=411, content={"detail": "Repository uploads require Content-Length"})
+                return finish(JSONResponse(status_code=411, content={"detail": "Repository uploads require Content-Length"}))
             if request.headers.get("transfer-encoding"):
-                return JSONResponse(status_code=411, content={"detail": "Chunked repository uploads are not supported; use a bounded Content-Length request"})
+                return finish(JSONResponse(status_code=411, content={"detail": "Chunked repository uploads are not supported; use a bounded Content-Length request"}))
             if declared_length < 0 or declared_length > settings.max_upload_bytes + 65536:
-                return JSONResponse(status_code=413, content={"detail": "Upload request exceeds the configured size limit"})
+                return finish(JSONResponse(status_code=413, content={"detail": "Upload request exceeds the configured size limit"}))
     response = await call_next(request)
-    response.headers["X-Request-ID"] = request_id
-    logger.info(json.dumps({"event": "http", "request_id": request_id, "method": request.method, "route": request.scope.get("route").path if request.scope.get("route") else "unmatched", "status": response.status_code, "duration_ms": round((time.perf_counter() - started) * 1000, 2)}))
-    return response
+    return finish(response)
 
 
 def entity(session: Session, model, identity: str):
@@ -268,16 +281,16 @@ def read_file(repository_id: str, path: str, session: Session = Depends(get_sess
 
 
 @app.post("/api/repositories/{repository_id}/query")
-def query(repository_id: str, body: QueryRequest, session: Session = Depends(get_session)):
+def query(repository_id: str, body: QueryRequest, request: Request, session: Session = Depends(get_session)):
     ready(session, repository_id)
     try:
-        return answer_question(session, repository_id, body.question, body.strategy, body.conversation_id)
+        return answer_question(session, repository_id, body.question, body.strategy, body.conversation_id, request_id=request.state.request_id)
     except ValueError as exc:
         session.rollback()
         raise HTTPException(422, redact_secrets(str(exc)))
     except Exception as exc:
         session.rollback()
-        logger.warning(json.dumps({"event": "query_failed", "repository_id": repository_id, "error_type": type(exc).__name__}))
+        logger.warning(json.dumps({"event": "query_failed", "request_id": request.state.request_id, "repository_id": repository_id, "error_type": type(exc).__name__}))
         raise HTTPException(502, "The provider could not complete this request. Check configuration and retry.")
 
 

@@ -2,7 +2,7 @@
 
 ## Architecture and boundaries
 
-Next.js App Router / TypeScript / Tailwind calls a versioned FastAPI REST API. SQLAlchemy stores repositories, files, semantic chunks, conversations, jobs, agent traces, patches and evaluation records. PostgreSQL + pgvector is the primary deployment; SQLite + JSON vectors is an explicit single-developer fallback. Redis/RQ separates API requests from indexing, agent and evaluation workers; an in-process executor is available for local demonstration. Providers for embeddings, generation, reranking and sandbox execution are independent.
+Next.js App Router / TypeScript / Tailwind calls a FastAPI REST API. SQLAlchemy stores repositories, files, semantic chunks, conversations, jobs, agent traces, patches and evaluation records. PostgreSQL + pgvector is the primary deployment; SQLite + JSON vectors is an explicit single-developer fallback. Redis/RQ separates API requests from indexing, agent and evaluation workers; an in-process executor is available for local demonstration. Providers for embeddings, generation, reranking and sandbox execution are independent.
 
 Ingestion validates a public GitHub URL or bounded ZIP, stages a private working copy, filters files and secrets, parses Python/JS/TS with Tree-sitter, embeds code-aware chunks and records conservative import relationships. Retrieval uses BM25 and cosine similarity, reciprocal rank fusion and an identifier-aware reranker. Answers carry citations from the retrieved allowlist. Repository content is untrusted evidence.
 

@@ -4,6 +4,7 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+IMAGE_REFERENCE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:/@-]*$"
 
 
 class Settings(BaseSettings):
@@ -36,7 +37,10 @@ class Settings(BaseSettings):
     max_context_chars: int = 30000
     sandbox_enabled: bool = True
     sandbox_timeout: int = 45
-    sandbox_image: str = "repopilot-sandbox:local"
+    sandbox_image: str = Field(default="repopilot-sandbox:local", min_length=1, max_length=256,
+                               pattern=IMAGE_REFERENCE_PATTERN)
+    sandbox_node_image: str = Field(default="node:22-alpine", min_length=1, max_length=256,
+                                    pattern=IMAGE_REFERENCE_PATTERN)
     sandbox_max_output: int = 20000
     agent_max_steps: int = 12
 

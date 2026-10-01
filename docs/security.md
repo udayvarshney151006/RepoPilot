@@ -65,7 +65,11 @@ The snapshot excludes `.git`, `node_modules`, virtual environments, symlinks and
 common credential files. The application environment is not copied into the
 container. Python pytest is preinstalled in the supplied image because runtime
 network access is disabled. JavaScript test dependencies require a separate
-appropriate image; the runner does not download them inside the sandbox.
+image configured by `SANDBOX_NODE_IMAGE`; the default `node:22-alpine` has
+Node/npm only. The runner does not install dependencies or pull images during
+execution. Both Python/Node image references are validated before use.
+Custom image tools/dependencies must be available outside `/workspace`, since
+the writable temporary mount hides any files the image stores there.
 
 The default Compose backend/worker have no Docker socket. They can inspect code
 and propose a patch while test results state unavailable. A host backend can opt
@@ -102,8 +106,11 @@ RQ uses JSON job serialization rather than pickle, reducing object-deserializati
 risk. The broker still controls executable job dispatch; restrict Redis access
 to the trusted application/worker network and operator.
 
-Operational logs should identify requests, repository, stage, duration and errors
-without secrets/raw credentials. Source and traces may contain sensitive data;
+HTTP/query logs share a UUID request ID and record structured timing/status
+metadata. Only canonical client UUIDs are accepted; other identifiers are
+replaced and never logged. The Next proxy forwards only validated UUID headers.
+Logs omit raw questions and authorization headers. Source and traces may contain
+sensitive data;
 give them the same access/retention policy as the repository. The current MVP
 keeps local data until the operator removes it.
 
